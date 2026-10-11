@@ -836,6 +836,39 @@ async function getConfigContent(rawHost, userAgent, _url, host, fakeHostName, fa
         responseBody = splitNodeData(uniqueIpTxt, noTLS, fakeHostName, fakeUserId, userAgent, protType, nat64, hostRemark, proxyIP);
         responseBody = [responseBodyTop, responseBody].join('\n');
     }
+    // Generate provider data locally so Clash does not depend on a converter.
+    if (isClashCondition(userAgent.toLowerCase(), _url)) {
+        const proxies = responseBody.split(/\r?\n/).filter(line => line.trim()).map(line => {
+            const uri = new URL(line.trim());
+            const type = uri.protocol.slice(0, -1);
+            if (type !== 'vless' && type !== 'trojan') throw new Error('Unsupported Clash node type');
+            const params = uri.searchParams;
+            const tls = params.get('security') === 'tls';
+            const node = {
+                name: decodeURIComponent(uri.hash.slice(1)) || uri.hostname,
+                type,
+                server: uri.hostname.replace(/^\[|\]$/g, ''),
+                port: Number(uri.port || (tls ? 443 : 80)),
+                network: params.get('type') || 'ws',
+                udp: false,
+                tls,
+                'skip-cert-verify': false,
+            };
+            node[type === 'vless' ? 'uuid' : 'password'] = decodeURIComponent(uri.username);
+            if (tls) {
+                node[type === 'vless' ? 'servername' : 'sni'] = params.get('sni') || params.get('host') || uri.hostname;
+                node['client-fingerprint'] = params.get('fp') || 'chrome';
+            }
+            if (node.network === 'ws') node['ws-opts'] = {
+                path: params.get('path') || '/',
+                headers: { Host: params.get('host') || uri.hostname },
+            };
+            return node;
+        });
+        isBase64 = false;
+        // JSON is valid YAML and is accepted by Mihomo proxy providers.
+        return JSON.stringify({ proxies }, null, 2);
+    }
     if (needEncode) {
         responseBody = base64Encode(responseBody);
     }

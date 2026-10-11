@@ -1,3 +1,4 @@
+export function createRequestHandler() {
 /**
  * YouTube  : https://youtube.com/@am_clubs
  * Telegram : https://t.me/am_clubs
@@ -82,13 +83,13 @@ let extraIpProxy;
 // };
 
 // ======= 主逻辑函数（共用） =======
-export async function mainHandler({ req, url, headers, res, env }) {
+async function mainHandler({ req, url, headers, res, env }) {
     const { ENABLE_LOG, ID, UUID, HOST, SOCKS5, IP_URL, PROXYIP, NAT64, NAT64_PREFIX, HOST_REMARK, PROT_TYPE, RANDOW_NUM, SUB_CONFIG, SUB_CONVERTER, NO_TLS, NIP_HOST, EXTRA_IP, EXTRA_IP_PROXY, ENABLE_OPEN } = env || {};
 
     const rawHost = headers.get('host') || headers.get('Host') || 'localhost';
     const userAgent = headers.get('User-Agent') || '';
     log(`[mainHandler]-->rawHost: ${rawHost}`);
-    const rawEnableLog = url.searchParams.get('ENABLE_LOG') || getEnvVar('ENABLE_LOG', env) || enableLog;
+    const rawEnableLog = getEnvVar('ENABLE_LOG', env) || false;
     enableLog = parseBool(rawEnableLog, enableLog);
     const rawEnableOpen = getEnvVar('ENABLE_OPEN', env) || enableOpen;
     enableOpen = parseBool(rawEnableOpen, enableOpen);
@@ -103,15 +104,18 @@ export async function mainHandler({ req, url, headers, res, env }) {
     parsedSocks5 = await parseSocks5FromUrl(s5, url);
     if (parsedSocks5) socks5Enable = true;
 
-    let ip_url = url.searchParams.get('IP_URL') || getEnvVar('IP_URL', env) || IP_URL;
-    if (ip_url) {
-        const result = await parseIpUrl(ip_url);
-        ipUrlCsv = result.ipUrlCsvResult;
-        ipUrlTxt = result.ipUrlTxtResult;
-    }
     const existing = await loadFromKV(env, decodeBase64Utf8('Y2Zfbm9ybWFsX2lw'));
     if (existing && existing.trim().length > 0) {
-        ipLocal = existing.split('\n').map(v => v.trim()).filter(v => v);
+        ipLocal = [...new Set(existing.split('\n').map(v => v.trim()).filter(Boolean))];
+        ipUrlTxt = [];
+        ipUrlCsv = [];
+    } else {
+        const ip_url = url.searchParams.get('IP_URL') || getEnvVar('IP_URL', env) || IP_URL;
+        if (ip_url) {
+            const result = await parseIpUrl(ip_url);
+            ipUrlCsv = result.ipUrlCsvResult;
+            ipUrlTxt = result.ipUrlTxtResult;
+        }
     }
 
     let proxyIPsAll = [];
@@ -218,7 +222,7 @@ export async function mainHandler({ req, url, headers, res, env }) {
     if (url.pathname === '/ipsFetch') {
         const ipSource = url.searchParams.get('ipSource');
         const port = url.searchParams.get('port') || '443';
-        nipHost = getNipHost(nipHost);
+        nipHost = await getNipHost(nipHost);
         log(`[handler]-->nipHost: ${nipHost}`);
         let ipData = await loadIpSource(ipSource, port);
         log('ipData type:', typeof ipData, ipData);
@@ -408,6 +412,7 @@ function sendResponse(content, userAgent = '', res = null, status = 200) {
     const isMozilla = userAgent.toLowerCase().includes('mozilla');
     const headers = {
         "Content-Type": isMozilla ? "text/html;charset=utf-8" : "text/plain;charset=utf-8",
+        "Cache-Control": "private, no-store",
         "Profile-Update-Interval": `${subUpdateTime}`,
         "Subscription-Userinfo": `upload=${upload}; download=${download}; total=${total}; expire=${expire}`,
     };
@@ -632,7 +637,8 @@ async function parseIpUrl(ip_url) {
     const newCsvUrls = [];
     const newTxtUrls = [];
     try {
-        const response = await fetch(ip_url);
+        const response = await fetch(ip_url, {signal: AbortSignal.timeout(8000)});
+        if (!response.ok) throw new Error('Upstream HTTP ' + response.status);
         const text = await response.text();
         const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
         const hasHttpLinks = lines.some(line => /^https?:\/\//i.test(line));
@@ -857,10 +863,12 @@ async function getConfigContent(rawHost, userAgent, _url, host, fakeHostName, fa
             const finalUrl = new URL(url).toString();
             log(`[getConfigContent] Fetching from: ${finalUrl}`);
             const response = await fetch(finalUrl, {
+                signal: AbortSignal.timeout(8000),
                 headers: {
                     'User-Agent': `${userAgent} ${projectName}`
                 }
             });
+            if (!response.ok) throw new Error('Subscription converter HTTP ' + response.status);
             responseBody = await response.text();
         } catch (err) {
             errorLogs(`[getConfigContent][fetch error] ${err.message}`);
@@ -2947,3 +2955,7 @@ function pageLogic() {
     
   `;
 }
+
+return mainHandler;
+}
+export async function mainHandler(args) { return createRequestHandler()(args); }

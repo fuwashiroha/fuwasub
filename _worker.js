@@ -7,8 +7,8 @@ export default {
         const headers = request.headers;
         return await mainHandler({ req: request, url, headers, res: null, env });
       } catch (err) {
-        errorLogs('Worker Error:', err);
-        return new Response('Worker Error: ' + err.message, { status: 500 });
+        console.error('Subscription request failed');
+        return new Response('Subscription temporarily unavailable', { status: 500 });
       }
   },
 };
